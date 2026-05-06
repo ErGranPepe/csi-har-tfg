@@ -214,6 +214,14 @@ class App(ctk.CTk):
         self._load_models()
         self._load_zone_classifier()
 
+        # ── Keyboard shortcuts ────────────────────────────────────────────────
+        self.bind("<space>",    lambda _: self._toggle_pause())
+        self.bind("r",         lambda _: self._toggle_record())
+        self.bind("c",         lambda _: self._calibrate())
+        self.bind("<F5>",      lambda _: self._reload_models())
+        self.bind("<Control-s>", lambda _: self._save_config())
+        self.bind("<Control-e>", lambda _: self._export_session())
+
         # ── Start simulation + tick ───────────────────────────────────────────
         t = threading.Thread(target=self._sim_loop, daemon=True)
         t.start()
@@ -690,6 +698,7 @@ class App(ctk.CTk):
         tab.grid_rowconfigure(0, weight=0)
         tab.grid_rowconfigure(1, weight=0)
         tab.grid_rowconfigure(2, weight=1)
+        tab.grid_rowconfigure(3, weight=0)
         tab.grid_columnconfigure(0, weight=1)
 
         # ── Model cards row ───────────────────────────────────────────────────
@@ -793,21 +802,53 @@ class App(ctk.CTk):
         # Per-class F1 table
         f1_tbl_frame = ctk.CTkFrame(bottom, fg_color=BG_CARD, corner_radius=8)
         f1_tbl_frame.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=4)
-        ctk.CTkLabel(f1_tbl_frame, text="Per-Class F1 (Transformer)",
-                     font=("Helvetica", 9, "bold"), text_color=ACCENT).grid(
-            row=0, column=0, columnspan=2, pady=(6, 2), padx=8)
+        self._f1_tbl_title = ctk.CTkLabel(
+            f1_tbl_frame, text=f"Per-Class F1 ({self.active_name})",
+            font=("Helvetica", 9, "bold"), text_color=ACCENT)
+        self._f1_tbl_title.grid(row=0, column=0, columnspan=3, pady=(6, 2), padx=8)
+        # Column headers
+        ctk.CTkLabel(f1_tbl_frame, text="Prec", font=("Helvetica", 7),
+                     text_color=TEXT_DIM).grid(row=1, column=1, sticky="e", padx=(2, 4))
+        ctk.CTkLabel(f1_tbl_frame, text="F1", font=("Helvetica", 7),
+                     text_color=TEXT_DIM).grid(row=1, column=2, sticky="e", padx=(2, 8))
         self._f1_table_labels = []
+        self._f1_prec_labels  = []
         for i, (aname, acolor) in enumerate(zip(ACTIVITY_NAMES, ACTIVITY_COLORS)):
             ctk.CTkLabel(f1_tbl_frame, text=aname, font=("Helvetica", 8),
-                         text_color=acolor).grid(row=i + 1, column=0, sticky="w",
+                         text_color=acolor).grid(row=i + 2, column=0, sticky="w",
                                                   padx=10, pady=1)
-            lbl = ctk.CTkLabel(f1_tbl_frame, text="—", font=("Helvetica", 8),
-                               text_color=TEXT)
-            lbl.grid(row=i + 1, column=1, sticky="e", padx=10, pady=1)
-            self._f1_table_labels.append(lbl)
-        f1_tbl_frame.grid_columnconfigure(1, weight=1)
+            prec_lbl = ctk.CTkLabel(f1_tbl_frame, text="—", font=("Helvetica", 8),
+                                    text_color=TEXT_DIM)
+            prec_lbl.grid(row=i + 2, column=1, sticky="e", padx=(2, 4), pady=1)
+            f1_lbl = ctk.CTkLabel(f1_tbl_frame, text="—", font=("Helvetica", 8, "bold"),
+                                  text_color=TEXT)
+            f1_lbl.grid(row=i + 2, column=2, sticky="e", padx=(2, 8), pady=1)
+            self._f1_prec_labels.append(prec_lbl)
+            self._f1_table_labels.append(f1_lbl)
+        f1_tbl_frame.grid_columnconfigure(0, weight=1)
 
         self._load_confusion_matrix(self.active_name)
+
+        # ── Training curves ───────────────────────────────────────────────────
+        tc_frame = ctk.CTkFrame(tab, fg_color=BG_MID, corner_radius=8)
+        tc_frame.grid(row=3, column=0, sticky="ew", padx=4, pady=(2, 4))
+        tc_frame.grid_columnconfigure(0, weight=1)
+        tc_path = os.path.join(BASE_DIR, self.cfg["ckpt_dir"], "training_curves_all.png")
+        if HAS_PIL and os.path.exists(tc_path):
+            try:
+                tc_img = Image.open(tc_path)
+                tc_img.thumbnail((1100, 200), Image.LANCZOS)
+                self._tc_photo = ImageTk.PhotoImage(tc_img)
+                tc_lbl = tk.Label(tc_frame, image=self._tc_photo, bg=BG_MID)
+                tc_lbl.grid(row=0, column=0, pady=4)
+            except Exception:
+                ctk.CTkLabel(tc_frame, text="Training curves — could not load image.",
+                             text_color=TEXT_DIM).grid(row=0, column=0, pady=6)
+        else:
+            note = ("Training curves: checkpoints/training_curves_all.png"
+                    if not HAS_PIL else "No training curves found — run train_all.py")
+            ctk.CTkLabel(tc_frame, text=note, font=("Helvetica", 9),
+                         text_color=TEXT_DIM).grid(row=0, column=0, pady=6)
 
     def _load_confusion_matrix(self, model_name: str):
         ckpt_dir = os.path.join(BASE_DIR, self.cfg["ckpt_dir"])
@@ -842,15 +883,24 @@ class App(ctk.CTk):
             ctk.CTkLabel(frame, text=f"Error: {e}",
                          text_color=RED).grid(row=0, column=0)
 
-        # Update per-class F1 table with placeholder values from benchmark
+        # Update per-class F1 table with real values from benchmark
         bench_by_name = {m["name"]: m for m in self.bench_data}
         m = bench_by_name.get(model_name, {})
-        overall_f1 = m.get("best_val_f1", 0)
-        for i, lbl in enumerate(self._f1_table_labels):
-            # Approximate per-class F1 by jittering overall (real values not in JSON)
-            rng = np.random.default_rng(i + hash(model_name) % 1000)
-            approx = float(np.clip(overall_f1 + rng.uniform(-0.12, 0.12), 0, 1))
-            lbl.configure(text=f"{approx:.3f}")
+        per_f1  = m.get("per_class_f1",  [])
+        per_prec = m.get("per_class_precision", [])
+        self._f1_tbl_title.configure(text=f"Per-Class F1 ({model_name})")
+        for i, (f1_lbl, prec_lbl) in enumerate(
+                zip(self._f1_table_labels, self._f1_prec_labels)):
+            if i < len(per_f1):
+                v = per_f1[i]
+                color = GREEN if v >= 0.9 else (YELLOW if v >= 0.6 else RED)
+                f1_lbl.configure(text=f"{v:.3f}", text_color=color)
+            else:
+                f1_lbl.configure(text="—", text_color=TEXT)
+            if i < len(per_prec):
+                prec_lbl.configure(text=f"{per_prec[i]:.3f}")
+            else:
+                prec_lbl.configure(text="—")
 
     # ══════════════════════════════════════════════════════════════════════════
     # TAB 3: Signal
@@ -866,16 +916,25 @@ class App(ctk.CTk):
         # Antenna selector
         ctrl = ctk.CTkFrame(tab, fg_color=BG_MID, corner_radius=8)
         ctrl.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 2))
-        ctk.CTkLabel(ctrl, text="Antenna:", font=("Helvetica", 10),
+        ctk.CTkLabel(ctrl, text="Antenna pair:", font=("Helvetica", 10),
                      text_color=TEXT).pack(side="left", padx=8, pady=6)
         self._ant_menu = ctk.CTkOptionMenu(
-            ctrl, values=["Antenna 0", "Antenna 1", "Antenna 2", "Antenna 3"],
-            width=160, fg_color=BG_CARD, button_color=ACCENT,
+            ctrl, values=["Antenna 0 (Tx1–Rx1)", "Antenna 1 (Tx1–Rx2)",
+                          "Antenna 2 (Tx2–Rx1)", "Antenna 3 (Tx2–Rx2)"],
+            width=200, fg_color=BG_CARD, button_color=ACCENT,
             button_hover_color=ACCENT2, text_color=TEXT,
             command=self._on_antenna_change,
         )
-        self._ant_menu.set(f"Antenna {self.cfg['selected_antenna']}")
+        self._ant_menu.set(f"Antenna {self.cfg['selected_antenna']}"
+                          + [" (Tx1–Rx1)", " (Tx1–Rx2)", " (Tx2–Rx1)", " (Tx2–Rx2)"][
+                              self.cfg["selected_antenna"]])
         self._ant_menu.pack(side="left", padx=8, pady=6)
+        Tooltip(self._ant_menu,
+                "Select the MIMO antenna pair to visualise in the spectrogram and FFT. "
+                "Different pairs provide spatial diversity — combine info in the Monitor tab.")
+        self._sig_activity_lbl = ctk.CTkLabel(
+            ctrl, text="", font=("Helvetica", 10, "bold"), text_color=ACCENT)
+        self._sig_activity_lbl.pack(side="right", padx=16, pady=6)
 
         # Spectrogram
         spec_frame = ctk.CTkFrame(tab, fg_color=BG_MID, corner_radius=8)
@@ -913,7 +972,7 @@ class App(ctk.CTk):
         self._fft_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
     def _on_antenna_change(self, val: str):
-        idx = int(val.split()[-1])
+        idx = int(val.split()[1])
         self._cfg_change("selected_antenna", idx)
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1170,14 +1229,24 @@ class App(ctk.CTk):
         if not path:
             return
         try:
-            arr = np.loadtxt(path, delimiter=",", dtype=np.float32)
+            import csv as _csv
+            with open(path, "r") as fh:
+                reader = _csv.reader(fh)
+                rows = [list(map(float, r)) for r in reader if r]
+            arr    = np.array(rows, dtype=np.float32)
             labels = arr[:, -1].astype(int)
             data   = arr[:, :-1]
             T = self.cfg["infer_win"]
             F = RAW_FEATURES
             n_win = data.shape[0] // T
-            data = data[:n_win * T].reshape(n_win, T, -1)[:, :, :F]
-            labels = labels[:n_win * T:T][:n_win]
+            if n_win == 0:
+                # Treat each row as a single window (already windowed)
+                data   = data[:, :F].reshape(-1, 1, F)
+                n_win  = len(data)
+                labels = labels[:n_win]
+            else:
+                data = data[:n_win * T].reshape(n_win, T, -1)[:, :, :F]
+                labels = labels[:n_win * T:T][:n_win]
             self._set_replay_data(data, labels, path)
         except Exception as e:
             messagebox.showerror("Error", f"Could not load CSV:\n{e}")
@@ -1318,6 +1387,32 @@ class App(ctk.CTk):
              "shift due to multipath, furniture, and environment-specific channel responses. "
              "Zone estimation accuracy expected to decrease significantly without site survey "
              "calibration. Class confusion is highest between transitional activities (Get Up/Get Down)."),
+
+            ("Real Hardware Connection",
+             "To use a real Wi-Fi CSI device instead of simulation:\n"
+             "1. Acquire CSI data using tools like linux-80211n-csitool, ESP32-CSI-Tool, "
+             "or nexmon_csi (Raspberry Pi).\n"
+             "2. Export packets as .npz (N×T×456) or .csv and load via the Dataset tab.\n"
+             "3. Site calibration is required for accurate zone estimation — record empty room "
+             "first, then subtract the static baseline.\n"
+             "4. The inference pipeline (normalize → PCA → network) is hardware-agnostic: "
+             "all pre-processing is identical to training."),
+
+            ("Dataset Formats Supported",
+             "NPZ:  keys 'data' (N,T,F) float32 and 'labels' (N,) int. F can be 456 (raw) "
+             "or 468 (raw+PCA). Labels 0–6 map to the 7 activities.\n\n"
+             "CSV:  Each row = one flattened packet (F values) + label in last column. "
+             "Rows are windowed into groups of infer_win packets automatically.\n\n"
+             "Repo folder:  data.csv + label.csv in the format of the Kovalenko et al. "
+             "(2021) IEEE DataPort dataset. data.csv has T×456 values per row per window."),
+
+            ("Keyboard Shortcuts",
+             "Space  — Pause / Resume simulation\n"
+             "R      — Toggle recording on/off\n"
+             "C      — Calibrate (clear packet buffer)\n"
+             "F5     — Reload all models from checkpoints\n"
+             "Ctrl+S — Save current configuration\n"
+             "Ctrl+E — Export recorded session to NPZ"),
 
             ("References",
              "• Vaswani et al. (2017). Attention Is All You Need. NeurIPS.\n"
@@ -1534,13 +1629,22 @@ class App(ctk.CTk):
 
     def _update_status_bar(self):
         fps = 1.0 / (np.mean(self._tick_times) + 1e-8) if self._tick_times else 0.0
+        if self._replay_mode:
+            mode_txt = "● REPLAY"
+            mode_col = ACCENT2
+        elif self._sim_paused:
+            mode_txt = "⏸ PAUSED"
+            mode_col = YELLOW
+        else:
+            mode_txt = "◉ SIM"
+            mode_col = GREEN
         self._sb_model.configure(text=f"Model: {self.active_name}")
         self._sb_device.configure(text=f"Device: {self.device}")
         self._sb_fps.configure(text=f"FPS: {fps:.1f}")
         self._sb_lat.configure(text=f"Latency: {self.infer_ms:.1f}ms")
         self._sb_time.configure(text=datetime.datetime.now().strftime("%H:%M:%S"))
         rec = "  ● REC" if self.cfg["record"] else ""
-        self._sb_rec.configure(text=rec)
+        self._sb_rec.configure(text=f"{mode_txt}{rec}", text_color=mode_col)
 
     def _update_monitor(self):
         # Banner
@@ -1631,6 +1735,11 @@ class App(ctk.CTk):
         spec_win = self.cfg["spec_win"]
         ant      = self.cfg["selected_antenna"]
         sim_hz   = self.cfg["sim_hz"]
+        conf = float(self.probs[self.pred_cls]) if len(self.probs) else 0.0
+        aname = ACTIVITY_NAMES[self.pred_cls]
+        acolor = ACTIVITY_COLORS[self.pred_cls]
+        self._sig_activity_lbl.configure(
+            text=f"▶ {aname}  {conf*100:.0f}%", text_color=acolor)
 
         with self._buf_lock:
             buf_snap = list(self.packet_buf[-spec_win:])
@@ -1650,7 +1759,7 @@ class App(ctk.CTk):
             self._spec_ax.cla()
             self._spec_ax.set_facecolor(BG_CARD)
             self._spec_ax.pcolormesh(t_s, f, 10 * np.log10(Sxx + 1e-12),
-                                     cmap="Blues", shading="auto")
+                                     cmap="inferno", shading="auto")
             self._spec_ax.set_title(
                 f"Spectrogram — Antenna {ant}", fontsize=8)
             self._spec_ax.set_xlabel("Time [s]", fontsize=7)
