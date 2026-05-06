@@ -77,6 +77,13 @@ class TestComputePCA:
         out = compute_pca(amp)
         assert out.shape[1] == 12
 
+    def test_all_zeros_no_crash(self):
+        """All-zero input (zero variance) must not crash — returns zeros."""
+        amp = np.zeros((SEQ_LEN, RAW_FEATURES), dtype=np.float32)
+        out = compute_pca(amp)
+        assert out.shape == (SEQ_LEN, 12)
+        assert np.isfinite(out).all()
+
 
 class TestFullPreprocess:
     def test_output_shape(self):
@@ -98,6 +105,21 @@ class TestFullPreprocess:
         amp = np.random.rand(SEQ_LEN, RAW_FEATURES).astype(np.float32) * AMP_MAX
         out = full_preprocess(amp)
         assert out.dtype == np.float32
+
+    def test_all_zeros_no_crash(self):
+        """Zero-amplitude window (empty room with no signal variance) must not crash."""
+        amp = np.zeros((SEQ_LEN, RAW_FEATURES), dtype=np.float32)
+        out = full_preprocess(amp)
+        assert out.shape == (SEQ_LEN, TOTAL_FEATURES)
+        assert np.isfinite(out).all()
+
+    def test_nan_input_sanitised(self):
+        """NaN values in raw CSI must be replaced, not propagate to output."""
+        amp = np.random.rand(SEQ_LEN, RAW_FEATURES).astype(np.float32) * AMP_MAX
+        amp[10, 50] = float('nan')
+        amp[64, 200] = float('inf')
+        out = full_preprocess(amp)
+        assert np.isfinite(out).all(), "NaN/Inf survived full_preprocess"
 
 
 class TestSimulatedDataset:

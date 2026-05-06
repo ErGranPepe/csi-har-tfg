@@ -1,5 +1,10 @@
+import os
+import glob
+import warnings
+
 import torch
 import numpy as np
+import scipy.ndimage
 from torch.utils.data import Dataset, DataLoader, random_split
 from sklearn import decomposition
 from scipy import signal as sp_signal
@@ -55,7 +60,7 @@ def wavelet_denoise(data: np.ndarray) -> np.ndarray:
     data : (N, F)
     """
     try:
-        import pywt
+        import pywt, warnings as _w
         wavelet = 'sym5'
         max_lv  = pywt.dwt_max_level(data.shape[0], wavelet)
         level   = min(3, max_lv)   # never exceed the safe level for this window
@@ -63,7 +68,9 @@ def wavelet_denoise(data: np.ndarray) -> np.ndarray:
         for f in range(data.shape[1]):
             coeffs = pywt.wavedec(data[:, f], wavelet, level=level)
             thr    = 0.06 * np.max(np.abs(coeffs[-1]))
-            coeffs = [pywt.threshold(c, thr, mode='soft') for c in coeffs]
+            with _w.catch_warnings():
+                _w.simplefilter("ignore", RuntimeWarning)
+                coeffs = [pywt.threshold(c, thr, mode='soft') for c in coeffs]
             rec    = pywt.waverec(coeffs, wavelet)
             out[:, f] = rec[:data.shape[0]]
         return out
@@ -85,10 +92,11 @@ def compute_pca(amplitudes: np.ndarray) -> np.ndarray:
     segs = []
     for i in range(ANTENNA_PAIRS):
         block = amplitudes[:, i * SUBCARRIERS:(i + 1) * SUBCARRIERS]
-        if block.shape[0] >= PCA_COMPONENTS:
-            segs.append(pca.fit_transform(block))
+        N = block.shape[0]
+        if N < PCA_COMPONENTS or block.std() < 1e-9:
+            segs.append(np.zeros((N, PCA_COMPONENTS), dtype=np.float32))
         else:
-            segs.append(np.zeros((block.shape[0], PCA_COMPONENTS)))
+            segs.append(pca.fit_transform(block))
     return np.concatenate(segs, axis=1)   # (N, 12)
 
 
@@ -102,12 +110,14 @@ def full_preprocess(amplitudes: np.ndarray,
     Returns    : (seq_len, 468)  normalised [0, 1]
     """
     amp = amplitudes.copy()
+    amp = np.nan_to_num(amp, nan=0.0, posinf=AMP_MAX, neginf=0.0)
 
     if apply_hampel and amp.shape[0] >= 15:
         amp = hampel_filter(amp)
 
     if apply_denoise and amp.shape[0] >= 8:
         amp = wavelet_denoise(amp)
+        amp = np.nan_to_num(amp, nan=0.0, posinf=AMP_MAX, neginf=0.0)
 
     pca_feat = compute_pca(amp)                          # (N, 12)
     features = np.concatenate([amp, pca_feat], axis=1)  # (N, 468)
@@ -270,11 +280,6 @@ def get_class_weights() -> torch.Tensor:
 # ══════════════════════════════════════════════════════════════════════════════
 # Public CSI Dataset Loaders
 # ══════════════════════════════════════════════════════════════════════════════
-
-import os
-import glob
-import scipy.ndimage
-import warnings
 
 # ── Catalog of known public CSI-HAR datasets ─────────────────────────────────
 DATASET_CATALOG = {
@@ -458,8 +463,8 @@ def _load_and_preprocess(raw: np.ndarray, seq_len: int,
         try:
             samples.append(full_preprocess(w.astype(np.float32)))
             labels.append(label)
-        except Exception:
-            pass
+        except Exception as e:
+            warnings.warn(f"_load_and_preprocess: window skipped — {e}")
     return samples, labels
 
 
@@ -507,8 +512,8 @@ class UTHARDataset(Dataset):
                     try:
                         self.samples.append(full_preprocess(interp))
                         self.labels.append(max(label, 0))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        warnings.warn(f"UT-HAR preprocess error: {e}")
             except Exception as e:
                 warnings.warn(f"UT-HAR NPY load error ({fpath}): {e}")
 
@@ -749,8 +754,8 @@ class SignFiDataset(Dataset):
                             self.samples.append(full_preprocess(interp))
                             lbl = int(lbls.flat[i]) if lbls is not None else i % 276
                             self.labels.append(lbl)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            warnings.warn(f"SignFi preprocess error (sample {i}): {e}")
                     continue
 
                 # ── Per-gesture MAT layout ────────────────────────────────────
@@ -769,8 +774,8 @@ class SignFiDataset(Dataset):
                 try:
                     self.samples.append(full_preprocess(interp))
                     self.labels.append(0)
-                except Exception:
-                    pass
+                except Exception as e:
+                    warnings.warn(f"SignFi preprocess error ({fpath}): {e}")
             except Exception as e:
                 warnings.warn(f"SignFi MAT error ({fpath}): {e}")
 
