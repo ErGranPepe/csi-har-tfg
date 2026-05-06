@@ -49,6 +49,10 @@ from model.data_loader import (
     ACTIVITY_NAMES, ACTIVITY_COLORS, SUBCARRIERS, ANTENNA_PAIRS,
     AMP_MAX, RAW_FEATURES,
     simulate_activity, compute_pca,
+    DATASET_CATALOG,
+    UTHARDataset, NTUFiDataset, MMFiDataset,
+    SignFiDataset, WiARDataset, ARILDataset,
+    autodetect_and_load,
 )
 from model.position_estimator import (
     ZoneClassifier, ZONE_NAMES, ZONE_COLORS, NUM_ZONES, extract_zone_features,
@@ -1137,42 +1141,121 @@ class App(ctk.CTk):
     def _build_tab_dataset(self):
         tab = self.tabs.tab("Dataset")
         tab.configure(fg_color=BG_DARK)
-        tab.grid_rowconfigure(0, weight=0)
-        tab.grid_rowconfigure(1, weight=1)
-        tab.grid_rowconfigure(2, weight=0)
+        tab.grid_rowconfigure(0, weight=0)  # toolbar
+        tab.grid_rowconfigure(1, weight=1)  # catalog + info panes
+        tab.grid_rowconfigure(2, weight=0)  # replay controls
         tab.grid_columnconfigure(0, weight=1)
 
-        # Buttons
-        btn_f = ctk.CTkFrame(tab, fg_color=BG_MID, corner_radius=8)
-        btn_f.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 2))
-        for i, (txt, cmd) in enumerate([
-            ("Load NPZ",         self._load_npz),
-            ("Load CSV",         self._load_csv),
-            ("Load Repo Folder", self._load_repo_folder),
-        ]):
-            ctk.CTkButton(btn_f, text=txt, width=160,
-                          fg_color=BG_CARD, hover_color=BG_PANEL,
-                          text_color=ACCENT, command=cmd).grid(
-                row=0, column=i, padx=8, pady=8)
+        # ── Toolbar ───────────────────────────────────────────────────────────
+        toolbar = ctk.CTkFrame(tab, fg_color=BG_MID, corner_radius=8)
+        toolbar.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 2))
+        toolbar.grid_columnconfigure(7, weight=1)
 
-        # Info text
-        info_frame = ctk.CTkFrame(tab, fg_color=BG_MID, corner_radius=8)
-        info_frame.grid(row=1, column=0, sticky="nsew", padx=4, pady=2)
-        info_frame.grid_rowconfigure(0, weight=1)
-        info_frame.grid_columnconfigure(0, weight=1)
-        self._ds_info = ctk.CTkTextbox(info_frame, state="disabled",
-                                        fg_color=BG_CARD, text_color=TEXT,
-                                        font=("Courier", 9), corner_radius=6)
-        self._ds_info.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
-        self._ds_write("No dataset loaded.\nUse the buttons above to load a dataset.\n")
+        buttons = [
+            ("NPZ",           self._load_npz,         ACCENT,  "NumPy archive (data+labels)"),
+            ("CSV",           self._load_csv,          ACCENT,  "CSV flattened dataset"),
+            ("Repo Folder",   self._load_repo_folder,  ACCENT,  "Kovalenko-2021 data.csv+label.csv"),
+            ("UT-HAR",        self._load_uthar,        ACCENT2, "University of Texas HAR (.npy / .csv)"),
+            ("NTU-Fi",        self._load_ntufi,        ACCENT2, "NTU-Fi HAR Benchmark (.mat)"),
+            ("MM-Fi",         self._load_mmfi,         ACCENT2, "MM-Fi multi-modal (.mat)"),
+            ("SignFi",        self._load_signfi,       ACCENT2, "Sign language CSI (.mat)"),
+            ("WiAR/ARIL",     self._load_wiar,         ACCENT2, "WiAR / ARIL activity CSV"),
+            ("Auto-detect",   self._load_autodetect,   GREEN,   "Auto-detect dataset format from folder"),
+        ]
+        for col, (txt, cmd, color, tip) in enumerate(buttons):
+            b = ctk.CTkButton(toolbar, text=txt, width=90,
+                              fg_color=BG_CARD, hover_color=BG_PANEL,
+                              text_color=color, command=cmd,
+                              font=("Helvetica", 9))
+            b.grid(row=0, column=col, padx=4, pady=6)
+            Tooltip(b, tip)
 
-        # Replay controls (hidden until dataset loaded)
+        # ── Middle: catalog (left) + dataset info (right) ─────────────────────
+        mid = ctk.CTkFrame(tab, fg_color="transparent")
+        mid.grid(row=1, column=0, sticky="nsew", padx=4, pady=2)
+        mid.grid_rowconfigure(0, weight=1)
+        mid.grid_columnconfigure(0, weight=2)
+        mid.grid_columnconfigure(1, weight=3)
+
+        # Catalog panel
+        cat_outer = ctk.CTkFrame(mid, fg_color=BG_MID, corner_radius=8)
+        cat_outer.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
+        cat_outer.grid_rowconfigure(1, weight=1)
+        cat_outer.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(cat_outer, text="Datasets Públicos Disponibles",
+                     font=("Helvetica", 11, "bold"), text_color=ACCENT).grid(
+            row=0, column=0, sticky="w", padx=10, pady=(8, 4))
+
+        cat_scroll = ctk.CTkScrollableFrame(cat_outer, fg_color=BG_DARK, corner_radius=6)
+        cat_scroll.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        cat_scroll.grid_columnconfigure(0, weight=1)
+
+        self._catalog_detail_lbl = None
+        for i, (ds_name, ds_info) in enumerate(DATASET_CATALOG.items()):
+            card = ctk.CTkFrame(cat_scroll, fg_color=BG_CARD, corner_radius=6)
+            card.grid(row=i, column=0, sticky="ew", padx=4, pady=3)
+            card.grid_columnconfigure(0, weight=1)
+            n_cls   = ds_info.get("n_classes", "?")
+            hw      = ds_info.get("hardware", "?")[:28]
+            size    = ds_info.get("size", "?")
+            ctk.CTkLabel(card, text=ds_name,
+                         font=("Helvetica", 10, "bold"),
+                         text_color=ACCENT if ds_info.get("loader") == "repo_folder" else ACCENT2,
+                         anchor="w").grid(row=0, column=0, sticky="ew", padx=8, pady=(6, 0))
+            ctk.CTkLabel(card,
+                         text=f"{n_cls} clases  •  {size}  •  {hw}",
+                         font=("Helvetica", 8), text_color=TEXT_DIM,
+                         anchor="w").grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 2))
+            ctk.CTkLabel(card, text=ds_info.get("description", "")[:65],
+                         font=("Helvetica", 8), text_color=TEXT,
+                         anchor="w", wraplength=240).grid(
+                row=2, column=0, sticky="ew", padx=8, pady=(0, 6))
+
+            # Click → show detail in right pane
+            def _show(name=ds_name):
+                self._show_catalog_detail(name)
+            for w in card.winfo_children():
+                w.bind("<Button-1>", lambda _e, n=ds_name: self._show_catalog_detail(n))
+            card.bind("<Button-1>", lambda _e, n=ds_name: self._show_catalog_detail(n))
+
+        # Info / detail panel (right)
+        info_outer = ctk.CTkFrame(mid, fg_color=BG_MID, corner_radius=8)
+        info_outer.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
+        info_outer.grid_rowconfigure(1, weight=1)
+        info_outer.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(info_outer, text="Dataset cargado / Detalle",
+                     font=("Helvetica", 11, "bold"), text_color=ACCENT).grid(
+            row=0, column=0, sticky="w", padx=10, pady=(8, 4))
+
+        self._ds_info = ctk.CTkTextbox(
+            info_outer, state="disabled",
+            fg_color=BG_CARD, text_color=TEXT,
+            font=("Courier", 9), corner_radius=6)
+        self._ds_info.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
+        self._ds_write(
+            "No hay dataset cargado.\n\n"
+            "• Haz clic en un dataset del catálogo para ver su ficha.\n"
+            "• Usa los botones de la barra superior para cargar datos.\n"
+            "• 'Auto-detect' detecta el formato automáticamente.\n\n"
+            "Formatos soportados:\n"
+            "  NPZ   — data(N,T,F) + labels(N,)\n"
+            "  CSV   — filas de paquetes + etiqueta última columna\n"
+            "  Repo  — carpeta con data.csv + label.csv\n"
+            "  UT-HAR  — .npy por actividad o carpetas con .csv\n"
+            "  NTU-Fi  — .mat con clave csi_data (3,114,T)\n"
+            "  MM-Fi   — .mat con clave csi (T,3,114)\n"
+            "  SignFi  — .mat con CSI_data_all (200,30,3,N)\n"
+            "  WiAR    — .csv por actividad (amplitudes × 90)\n"
+            "  ARIL    — .csv por actividad (amplitudes × 90)\n"
+        )
+
+        # ── Replay controls ────────────────────────────────────────────────────
         self._replay_ctrl = ctk.CTkFrame(tab, fg_color=BG_MID, corner_radius=8)
         self._replay_ctrl.grid(row=2, column=0, sticky="ew", padx=4, pady=(2, 4))
         self._replay_ctrl.grid_columnconfigure(2, weight=1)
 
         self._replay_btn = ctk.CTkButton(
-            self._replay_ctrl, text="Start Replay", width=140,
+            self._replay_ctrl, text="▶ Start Replay", width=140,
             fg_color=GREEN, hover_color="#00aa55", text_color=BG_DARK,
             command=self._toggle_replay)
         self._replay_btn.grid(row=0, column=0, padx=8, pady=8)
@@ -1191,17 +1274,46 @@ class App(ctk.CTk):
         self._replay_speed_sl.grid(row=0, column=2, padx=4, pady=8, sticky="ew")
 
         self._replay_prog = ctk.CTkProgressBar(
-            self._replay_ctrl, width=400, progress_color=ACCENT2)
+            self._replay_ctrl, height=8, progress_color=ACCENT2)
         self._replay_prog.set(0)
         self._replay_prog.grid(row=1, column=0, columnspan=4, padx=8, pady=(0, 8), sticky="ew")
-
         self._replay_ctrl.grid_remove()
+
+    def _show_catalog_detail(self, name: str):
+        info = DATASET_CATALOG.get(name, {})
+        lines = [
+            f"{'─'*50}",
+            f"  {name}",
+            f"{'─'*50}",
+            f"",
+            f"  {info.get('description','')}",
+            f"",
+            f"  Hardware  : {info.get('hardware','')}",
+            f"  Antenas   : {info.get('antenna_cfg','')}",
+            f"  Subport.  : {info.get('subcarriers','')}",
+            f"  Features  : {info.get('features','')}",
+            f"  Clases    : {info.get('n_classes','')} → {', '.join(info.get('activities',[])[:6])}{'…' if len(info.get('activities',[]))>6 else ''}",
+            f"  Sujetos   : {info.get('n_subjects','')}",
+            f"  Tasa      : {info.get('sample_rate','')}",
+            f"  Tamaño    : {info.get('size','')}",
+            f"  Formato   : {info.get('format','')}",
+            f"",
+            f"  Referencia: {info.get('paper','')}",
+            f"  DOI       : {info.get('doi','—')}",
+            f"  URL       : {info.get('url','')}",
+            f"",
+            f"{'─'*50}",
+            f"  Loader    : {info.get('loader','')}",
+        ]
+        self._ds_write("\n".join(lines))
 
     def _ds_write(self, text: str):
         self._ds_info.configure(state="normal")
         self._ds_info.delete("0.0", "end")
         self._ds_info.insert("0.0", text)
         self._ds_info.configure(state="disabled")
+
+    # ── Dataset loaders ───────────────────────────────────────────────────────
 
     def _load_npz(self):
         path = filedialog.askopenfilename(
@@ -1210,15 +1322,14 @@ class App(ctk.CTk):
         if not path:
             return
         try:
-            npz = np.load(path, allow_pickle=True)
-            data   = npz["data"]     # (N, T, F)
-            labels = npz["labels"]   # (N,)
-            # F can be 456 or 468 — extract raw amplitudes
+            npz  = np.load(path, allow_pickle=True)
+            data = npz["data"]
+            labels = npz["labels"]
             if data.shape[2] >= RAW_FEATURES:
                 raw = data[:, :, :RAW_FEATURES]
             else:
                 raw = data
-            self._set_replay_data(raw, labels, path)
+            self._set_replay_data(raw, labels, os.path.basename(path), "NPZ")
         except Exception as e:
             messagebox.showerror("Error", f"Could not load NPZ:\n{e}")
 
@@ -1231,64 +1342,126 @@ class App(ctk.CTk):
         try:
             import csv as _csv
             with open(path, "r") as fh:
-                reader = _csv.reader(fh)
-                rows = [list(map(float, r)) for r in reader if r]
+                rows = [list(map(float, r)) for r in _csv.reader(fh) if r]
             arr    = np.array(rows, dtype=np.float32)
             labels = arr[:, -1].astype(int)
             data   = arr[:, :-1]
             T = self.cfg["infer_win"]
-            F = RAW_FEATURES
             n_win = data.shape[0] // T
             if n_win == 0:
-                # Treat each row as a single window (already windowed)
-                data   = data[:, :F].reshape(-1, 1, F)
-                n_win  = len(data)
-                labels = labels[:n_win]
+                data   = data[:, :RAW_FEATURES].reshape(-1, 1, RAW_FEATURES)
+                labels = labels[:len(data)]
             else:
-                data = data[:n_win * T].reshape(n_win, T, -1)[:, :, :F]
+                data   = data[:n_win * T].reshape(n_win, T, -1)[:, :, :RAW_FEATURES]
                 labels = labels[:n_win * T:T][:n_win]
-            self._set_replay_data(data, labels, path)
+            self._set_replay_data(data, labels, os.path.basename(path), "CSV")
         except Exception as e:
             messagebox.showerror("Error", f"Could not load CSV:\n{e}")
 
     def _load_repo_folder(self):
-        folder = filedialog.askdirectory(title="Select Repo Data Folder")
+        folder = filedialog.askdirectory(title="Select Kovalenko-2021 Folder")
         if not folder:
             return
         try:
-            data_csv  = os.path.join(folder, "data.csv")
-            label_csv = os.path.join(folder, "label.csv")
-            if not os.path.exists(data_csv) or not os.path.exists(label_csv):
-                raise FileNotFoundError("Expected data.csv and label.csv in folder")
-            data   = np.loadtxt(data_csv, delimiter=",", dtype=np.float32)
-            labels = np.loadtxt(label_csv, delimiter=",", dtype=int)
-            T = self.cfg["infer_win"]
-            n_win = data.shape[0] // T
+            data   = np.loadtxt(os.path.join(folder, "data.csv"),  delimiter=",", dtype=np.float32)
+            labels = np.loadtxt(os.path.join(folder, "label.csv"), delimiter=",", dtype=int)
+            T      = self.cfg["infer_win"]
+            n_win  = data.shape[0] // T
             data   = data[:n_win * T].reshape(n_win, T, RAW_FEATURES)
             labels = labels[:n_win * T:T][:n_win]
-            self._set_replay_data(data, labels, folder)
+            self._set_replay_data(data, labels, os.path.basename(folder), "Kovalenko-2021")
         except Exception as e:
-            messagebox.showerror("Error", f"Could not load folder:\n{e}")
+            messagebox.showerror("Error", f"Could not load repo folder:\n{e}")
 
-    def _set_replay_data(self, data: np.ndarray, labels: np.ndarray, source: str):
+    def _load_public_ds(self, ds_class, ds_label: str, file_mode: str = "folder"):
+        if file_mode == "file":
+            path = filedialog.askopenfilename(
+                title=f"Select {ds_label} file",
+                filetypes=[("MAT / NPY / CSV", "*.mat *.npy *.csv"), ("All", "*.*")])
+            folder = os.path.dirname(path) if path else None
+        else:
+            folder = filedialog.askdirectory(title=f"Select {ds_label} folder")
+        if not folder:
+            return
+        try:
+            self._ds_write(f"Loading {ds_label}…\nFolder: {folder}\nPlease wait…")
+            self.update_idletasks()
+            ds = ds_class(folder, seq_len=self.cfg["infer_win"])
+            if len(ds) == 0:
+                messagebox.showwarning(ds_label, f"No samples loaded from:\n{folder}\n\nCheck folder structure matches the expected format.")
+                return
+            data   = np.stack([ds[i][0].numpy() for i in range(len(ds))])  # (N,T,468)
+            labels = np.array([ds[i][1].item() for i in range(len(ds))])
+            # data already has 468 features (preprocessed); strip PCA for raw buffer
+            raw = data[:, :, :RAW_FEATURES]
+            self._set_replay_data(raw, labels, os.path.basename(folder), ds_label)
+        except Exception as e:
+            messagebox.showerror(ds_label, f"Load error:\n{e}")
+
+    def _load_uthar(self):
+        self._load_public_ds(UTHARDataset,  "UT-HAR")
+    def _load_ntufi(self):
+        self._load_public_ds(NTUFiDataset,  "NTU-Fi-HAR")
+    def _load_mmfi(self):
+        self._load_public_ds(MMFiDataset,   "MM-Fi")
+    def _load_signfi(self):
+        self._load_public_ds(SignFiDataset, "SignFi")
+    def _load_wiar(self):
+        self._load_public_ds(WiARDataset,   "WiAR / ARIL")
+
+    def _load_autodetect(self):
+        folder = filedialog.askdirectory(title="Select Dataset Folder (Auto-detect)")
+        if not folder:
+            return
+        try:
+            self._ds_write(f"Auto-detecting dataset in:\n{folder}\nPlease wait…")
+            self.update_idletasks()
+            ds, name = autodetect_and_load(folder, seq_len=self.cfg["infer_win"])
+            if len(ds) == 0:
+                messagebox.showwarning("Auto-detect", f"Format detected as '{name}' but no samples loaded.\nCheck folder structure.")
+                return
+            data   = np.stack([ds[i][0].numpy() for i in range(len(ds))])
+            labels = np.array([ds[i][1].item() for i in range(len(ds))])
+            raw    = data[:, :, :RAW_FEATURES]
+            self._set_replay_data(raw, labels, os.path.basename(folder), name)
+        except ValueError as e:
+            messagebox.showerror("Auto-detect", str(e))
+        except Exception as e:
+            messagebox.showerror("Auto-detect", f"Error:\n{e}")
+
+    def _set_replay_data(self, data: np.ndarray, labels: np.ndarray,
+                         source: str, ds_type: str = ""):
         self._replay_data   = data
         self._replay_labels = labels
         self._replay_idx    = 0
         N, T, F = data.shape
-        class_counts = {name: 0 for name in ACTIVITY_NAMES}
+
+        # Count labels — use catalog activities if known, else show raw indices
+        label_names = (DATASET_CATALOG.get(ds_type, {}).get("activities") or ACTIVITY_NAMES)
+        counts: dict[str, int] = {}
         for lbl in labels:
-            if 0 <= lbl < len(ACTIVITY_NAMES):
-                class_counts[ACTIVITY_NAMES[lbl]] += 1
-        info = (
-            f"Source:  {source}\n"
-            f"Windows: {N:,}\n"
-            f"Seq len: {T}\n"
-            f"Features:{F}\n"
-            f"Classes:\n"
-        )
-        for name, cnt in class_counts.items():
-            info += f"  {name:<12}: {cnt:>5} ({100*cnt/N:.1f}%)\n"
-        self._ds_write(info)
+            name = label_names[lbl] if lbl < len(label_names) else f"class_{lbl}"
+            counts[name] = counts.get(name, 0) + 1
+
+        unique_classes = len(counts)
+        lines = [
+            f"{'═'*46}",
+            f"  Dataset cargado",
+            f"{'─'*46}",
+            f"  Fuente   : {source}",
+            f"  Tipo     : {ds_type}",
+            f"  Ventanas : {N:,}",
+            f"  Seq len  : {T}",
+            f"  Features : {F}  (→ se usan {RAW_FEATURES} amplitudes)",
+            f"  Clases   : {unique_classes}",
+            f"{'─'*46}",
+            f"  Distribución de clases:",
+        ]
+        for name, cnt in sorted(counts.items(), key=lambda x: -x[1]):
+            bar = "█" * int(20 * cnt / N)
+            lines.append(f"  {name:<14} {cnt:>5}  {100*cnt/N:5.1f}%  {bar}")
+        lines.append(f"{'═'*46}")
+        self._ds_write("\n".join(lines))
         self._replay_ctrl.grid()
 
     def _toggle_replay(self):

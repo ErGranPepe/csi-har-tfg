@@ -87,6 +87,7 @@ class CSITransformer(nn.Module):
             enc_layer,
             num_layers=num_layers,
             norm=nn.LayerNorm(d_model),
+            enable_nested_tensor=False,
         )
 
         # Classification head

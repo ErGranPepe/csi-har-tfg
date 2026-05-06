@@ -63,10 +63,11 @@ csi-har-tfg/
 │   └── data_loader.py         # Simulación CSI, PCA, Hampel, wavelet, Dataset
 ├── gui/
 │   └── app.py                 # Interfaz 6 pestañas (1760 líneas)
-├── tests/                     # 73 tests pytest (73 passed, 0 failed)
+├── tests/                     # 112 tests pytest (112 passed, 0 failed)
 │   ├── test_models.py
 │   ├── test_data_pipeline.py
-│   └── test_zone_classifier.py
+│   ├── test_zone_classifier.py
+│   └── test_public_loaders.py
 ├── checkpoints/               # Pesos entrenados + métricas
 │   ├── Transformer.pth        # Mejor modelo (F1=0.826)
 │   ├── BiLSTM.pth / SimpleLSTM.pth / FCN.pth
@@ -106,7 +107,7 @@ Ventana CSI bruta (128 paquetes × 456 subportadoras)
 | **Analysis** | Comparativa modelos, matrices de confusión, métricas por clase |
 | **Signal** | Espectrograma STFT, FFT Doppler, selector de antena |
 | **Config** | Todos los parámetros configurables (gui_config.json) |
-| **Dataset** | Carga datasets externos (NPZ / CSV / formato repo) |
+| **Dataset** | Carga 7 datasets públicos + NPZ/CSV/repo + auto-detección de formato |
 | **Help** | Documentación científica integrada: CSI, modelos, limitaciones |
 
 ---
@@ -130,7 +131,7 @@ Ventana CSI bruta (128 paquetes × 456 subportadoras)
 
 ```bash
 py -m pytest tests/ -v
-# 73 passed, 0 failed, 6 warnings
+# 112 passed, 0 failed
 ```
 
 | Módulo | Tests | Cubre |
@@ -138,6 +139,7 @@ py -m pytest tests/ -v
 | `test_models.py` | 22 | Shapes, gradientes, softmax, registro |
 | `test_data_pipeline.py` | 28 | Simulación, PCA, preprocesamiento, dataset |
 | `test_zone_classifier.py` | 23 | Features de zona, MLP, ZoneDataset |
+| `test_public_loaders.py` | 39 | Loaders públicos: UT-HAR, NTU-Fi, MM-Fi, SignFi, WiAR, ARIL, interpolación |
 
 ---
 
@@ -151,10 +153,24 @@ py train_all.py
 
 ## Cargar datos reales
 
-La pestaña **Dataset** soporta tres formatos:
+La pestaña **Dataset** incluye un **catálogo de 7 datasets públicos** con carga directa:
+
+| Dataset | Actividades | Hardware | Formato | Ref |
+|---------|-------------|----------|---------|-----|
+| **UT-HAR** | 7 (fall, walk, run…) | Intel 5300, 90 feat | NPY / CSV | Yousefi 2017 |
+| **NTU-Fi-HAR** | 6 (box, circle, fall…) | Intel 5300, 342 feat | MAT | Chen 2022 |
+| **MM-Fi** | 27 rehabilitación | Intel AX200, 342 feat | MAT | Yang 2023 |
+| **SignFi** | 276 ASL + 20 gestos | Intel 5300, 90 feat | MAT | Ha 2019 |
+| **WiAR** | 16 actividades | Intel 5300, 90 feat | CSV | Guo 2019 |
+| **ARIL** | 6 actividades | Intel 5300, 90 feat | CSV | Restuccia 2019 |
+| **Kovalenko-2021** | 7 (repo nativo) | TP-Link, 456 feat | CSV | Kovalenko 2021 |
+
+Todos los formatos se normalizan mediante `universal_csi_interpolate` a **(128, 456)** antes del preprocesado. El botón **Auto-detect** identifica automáticamente el formato por extensión y estructura de carpetas.
+
+Formatos genéricos también soportados:
 - **NPZ:** arrays `data: (N, T, 456)` y `labels: (N,)`
 - **CSV:** filas aplanadas + etiqueta como última columna
-- **Carpeta repo:** `data.csv` + `label.csv` (formato del dataset fuente)
+- **Carpeta repo:** `data.csv` + `label.csv` (formato Kovalenko)
 
 ---
 
@@ -172,6 +188,12 @@ La pestaña **Dataset** soporta tres formatos:
 - Wang et al. (2017). *Time Series Classification from Scratch*. IJCNN.
 - Hochreiter & Schmidhuber (1997). *Long Short-Term Memory*. Neural Computation.
 - Kovalenko et al. (2021). *Wi-Fi CSI Dataset*. IEEE DataPort.
+- Yousefi et al. (2017). *A Survey on Behavior Recognition Using WiFi CSI*. IEEE Communications Magazine. (**UT-HAR**)
+- Chen et al. (2022). *WiFi CSI Sensing Benchmark*. arXiv. (**NTU-Fi-HAR**)
+- Yang et al. (2023). *MM-Fi: Multi-Modal Non-Intrusive 4D Human Dataset*. NeurIPS D&B. (**MM-Fi**)
+- Ha & Kornél (2019). *SignFi: Sign Language Recognition Using WiFi*. ACM IMWUT. (**SignFi**)
+- Guo et al. (2019). *WiAR: Device-Free WiFi Human Activity Recognition*. IEEE Access. (**WiAR**)
+- Restuccia et al. (2019). *ARIL: CSI-based Indoor Localization and Activity Recognition*. IEEE INFOCOM. (**ARIL**)
 - ITU-R P.1238-10 (2019). *Indoor propagation model*.
 
 ---
