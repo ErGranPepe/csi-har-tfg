@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Old training artifacts (not needed)
+checkpoints/transformer_csi.pth
+checkpoints/confusion_matrix.png
+
+# Keep zone_stats.npz (tiny normalization file, 628 bytes)
+!checkpoints/zone_stats.npz
+
+# Large data files
+*.npz
+*.mat
+*.csv
+repo_data/dataset/
+
+# Logs
+*.log
+train_all*.log
+train_log.txt
+
+# GUI state
+gui_config.json
+gui_stdout.txt
+gui_stderr.txt
+gui_out*.txt
+gui_err*.txt
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual env
+venv/
+env/
+.env/
+
+# Keep these (small, committed):
+# checkpoints/benchmark.json   -> committed (metadata only)
+# checkpoints/confusion_*.png  -> committed (plots)
+# checkpoints/training_curves_all.png -> committed
+# checkpoints/zone_stats.npz   -> committed (normalization stats, tiny)

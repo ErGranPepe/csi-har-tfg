@@ -1,0 +1,43 @@
+{
+  "har_models": [
+    {
+      "name": "SimpleLSTM",
+      "description": "Unidirectional 2-layer LSTM (256 units) + input projection 468\u219264.",
+      "paper": "Hochreiter & Schmidhuber (1997). Long Short-Term Memory.",
+      "n_params": 888455,
+      "best_val_f1": 0.4713,
+      "best_val_acc": 0.5075,
+      "latency_ms": 9.63
+    },
+    {
+      "name": "BiLSTM",
+      "description": "Bidirectional 2-layer LSTM (128+128 units) + input projection 468\u219264.",
+      "paper": "Schuster & Paliwal (1997). Bidirectional Recurrent Neural Networks.",
+      "n_params": 658311,
+      "best_val_f1": 0.768,
+      "best_val_acc": 0.7825,
+      "latency_ms": 8.83
+    },
+    {
+      "name": "FCN",
+      "description": "Fully Convolutional Network with Global Average Pooling. Repo baseline.",
+      "paper": "Wang et al. (2017). Time Series Classification from Scratch. IJCNN.",
+      "n_params": 743303,
+      "best_val_f1": 0.3051,
+      "best_val_acc": 0.3075,
+      "latency_ms": 5.36
+    },
+    {
+      "name": "Transformer",
+      "description": "Conv stem + Transformer encoder (d=64, 4 heads, 2 layers). This work.",
+      "paper": "Vaswani et al. (2017). Attention Is All You Need. NeurIPS.",
+      "n_params": 330887,
+      "best_val_f1": 0.8256,
+      "best_val_acc": 0.825,
+      "latency_ms": 5.32
+    }
+  ],
+  "zone_classifier": {
+    "best_acc": 0.9812
+  }
+}
