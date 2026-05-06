@@ -1152,15 +1152,16 @@ class App(ctk.CTk):
         toolbar.grid_columnconfigure(7, weight=1)
 
         buttons = [
-            ("NPZ",           self._load_npz,         ACCENT,  "NumPy archive (data+labels)"),
-            ("CSV",           self._load_csv,          ACCENT,  "CSV flattened dataset"),
-            ("Repo Folder",   self._load_repo_folder,  ACCENT,  "Kovalenko-2021 data.csv+label.csv"),
-            ("UT-HAR",        self._load_uthar,        ACCENT2, "University of Texas HAR (.npy / .csv)"),
-            ("NTU-Fi",        self._load_ntufi,        ACCENT2, "NTU-Fi HAR Benchmark (.mat)"),
-            ("MM-Fi",         self._load_mmfi,         ACCENT2, "MM-Fi multi-modal (.mat)"),
-            ("SignFi",        self._load_signfi,       ACCENT2, "Sign language CSI (.mat)"),
-            ("WiAR/ARIL",     self._load_wiar,         ACCENT2, "WiAR / ARIL activity CSV"),
-            ("Auto-detect",   self._load_autodetect,   GREEN,   "Auto-detect dataset format from folder"),
+            ("NPZ",           self._load_npz,          ACCENT,  "NumPy archive (data+labels)"),
+            ("CSV",           self._load_csv,           ACCENT,  "CSV flattened dataset"),
+            ("Session JSON",  self._load_session_json,  ACCENT,  "Session JSON recorded by this GUI"),
+            ("Repo Folder",   self._load_repo_folder,   ACCENT,  "Kovalenko-2021 data.csv+label.csv"),
+            ("UT-HAR",        self._load_uthar,         ACCENT2, "University of Texas HAR (.npy / .csv)"),
+            ("NTU-Fi",        self._load_ntufi,         ACCENT2, "NTU-Fi HAR Benchmark (.mat)"),
+            ("MM-Fi",         self._load_mmfi,          ACCENT2, "MM-Fi multi-modal (.mat)"),
+            ("SignFi",        self._load_signfi,        ACCENT2, "Sign language CSI (.mat)"),
+            ("WiAR/ARIL",     self._load_wiar,          ACCENT2, "WiAR / ARIL activity CSV"),
+            ("Auto-detect",   self._load_autodetect,    GREEN,   "Auto-detect dataset format from folder"),
         ]
         for col, (txt, cmd, color, tip) in enumerate(buttons):
             b = ctk.CTkButton(toolbar, text=txt, width=90,
@@ -1357,6 +1358,30 @@ class App(ctk.CTk):
             self._set_replay_data(data, labels, os.path.basename(path), "CSV")
         except Exception as e:
             messagebox.showerror("Error", f"Could not load CSV:\n{e}")
+
+    def _load_session_json(self):
+        path = filedialog.askopenfilename(
+            title="Load Session JSON",
+            filetypes=[("JSON session", "*.json"), ("All", "*.*")])
+        if not path:
+            return
+        try:
+            import json as _json
+            with open(path, "r") as fh:
+                session = _json.load(fh)
+            samples = session.get("samples", [])
+            if not samples:
+                raise ValueError("No samples found in session JSON.")
+            data   = np.array([s["csi"] for s in samples], dtype=np.float32)
+            labels = np.array([s.get("pred", 0) for s in samples], dtype=int)
+            # Each sample is (456,) — reshape to (N,1,456) so replay works
+            data = data[:, None, :RAW_FEATURES]
+            n = session.get("metadata", {}).get("num_samples", len(samples))
+            self._set_replay_data(data, labels,
+                                  os.path.basename(path),
+                                  f"Session JSON ({n} samples — REAL CSI)")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not load session JSON:\n{e}")
 
     def _load_repo_folder(self):
         folder = filedialog.askdirectory(title="Select Kovalenko-2021 Folder")

@@ -63,7 +63,7 @@ csi-har-tfg/
 │   └── data_loader.py         # Simulación CSI, PCA, Hampel, wavelet, Dataset
 ├── gui/
 │   └── app.py                 # Interfaz 6 pestañas (1760 líneas)
-├── tests/                     # 112 tests pytest (112 passed, 0 failed)
+├── tests/                     # 115 tests pytest (115 passed, 0 failed)
 │   ├── test_models.py
 │   ├── test_data_pipeline.py
 │   ├── test_zone_classifier.py
@@ -131,15 +131,15 @@ Ventana CSI bruta (128 paquetes × 456 subportadoras)
 
 ```bash
 py -m pytest tests/ -v
-# 112 passed, 0 failed
+# 115 passed, 0 failed, 0 warnings
 ```
 
 | Módulo | Tests | Cubre |
 |---|---|---|
 | `test_models.py` | 22 | Shapes, gradientes, softmax, registro |
-| `test_data_pipeline.py` | 28 | Simulación, PCA, preprocesamiento, dataset |
+| `test_data_pipeline.py` | 30 | Simulación, PCA, preprocesamiento, zeros/NaN edge cases |
 | `test_zone_classifier.py` | 23 | Features de zona, MLP, ZoneDataset |
-| `test_public_loaders.py` | 39 | Loaders públicos: UT-HAR, NTU-Fi, MM-Fi, SignFi, WiAR, ARIL, interpolación |
+| `test_public_loaders.py` | 39 | Loaders públicos: UT-HAR, NTU-Fi, MM-Fi, SignFi, WiAR, ARIL, interpolación, autodetect |
 
 ---
 

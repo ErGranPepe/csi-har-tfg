@@ -20,19 +20,25 @@ checkpoints/confusion_matrix.png
 *.npz
 *.mat
 *.csv
-repo_data/dataset/
+
+# External repo clone (original Kovalenko dataset tools)
+repo_data/
 
 # Logs
 *.log
 train_all*.log
 train_log.txt
 
-# GUI state
+# GUI state / logs
 gui_config.json
 gui_stdout.txt
 gui_stderr.txt
 gui_out*.txt
 gui_err*.txt
+gui_v*.txt
+
+# Claude Code memory / IDE internals
+.claude/
 
 # IDE / OS
 .vscode/
