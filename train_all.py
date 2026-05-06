@@ -123,10 +123,13 @@ def train_model(name: str, train_loader, val_loader, device):
     print(f"  Parameters: {n_params:,}")
 
     weights   = get_class_weights().to(device)
-    criterion = nn.CrossEntropyLoss(weight=weights)
+    criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.1)
     optimizer = optim.Adam(model.parameters(), lr=MODEL_LR[name], weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=4)
+    if name == "Transformer":
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS, eta_min=1e-5)
+    else:
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=4)
 
     tr_losses, va_losses, tr_accs, va_accs = [], [], [], []
     best_f1 = 0.0
@@ -139,7 +142,10 @@ def train_model(name: str, train_loader, val_loader, device):
     for ep in range(1, EPOCHS + 1):
         tr_l, tr_a, _, _, _        = run_epoch(model, train_loader, criterion, optimizer, device, True)
         va_l, va_a, va_f1, vy, vp  = run_epoch(model, val_loader,   criterion, None,      device, False)
-        scheduler.step(va_l)
+        if isinstance(scheduler, optim.lr_scheduler.CosineAnnealingLR):
+            scheduler.step()
+        else:
+            scheduler.step(va_l)
         tr_losses.append(tr_l); va_losses.append(va_l)
         tr_accs.append(tr_a);   va_accs.append(va_a)
         print(f"  {ep:>3} | {tr_l:>7.4f} {tr_a*100:>6.2f}% | {va_l:>7.4f} {va_a*100:>6.2f}% {va_f1:>6.3f}")
@@ -150,6 +156,9 @@ def train_model(name: str, train_loader, val_loader, device):
 
     # Final metrics
     print(f"\n  Best val F1: {best_f1:.3f}  >>  {ckpt}")
+    report = classification_report(last_vy, last_vp,
+                                   target_names=ACTIVITY_NAMES,
+                                   output_dict=True, zero_division=0)
     print(classification_report(last_vy, last_vp,
                                  target_names=ACTIVITY_NAMES,
                                  digits=3, zero_division=0))
@@ -157,18 +166,25 @@ def train_model(name: str, train_loader, val_loader, device):
 
     lat_ms = measure_latency(model, device)
 
+    per_f1   = [round(report[a]["f1-score"],   4) for a in ACTIVITY_NAMES]
+    per_prec = [round(report[a]["precision"],  4) for a in ACTIVITY_NAMES]
+    per_rec  = [round(report[a]["recall"],     4) for a in ACTIVITY_NAMES]
+
     return {
-        "name":         name,
-        "description":  MODEL_CONFIGS[name]["description"],
-        "paper":        MODEL_CONFIGS[name]["paper"],
-        "n_params":     n_params,
-        "best_val_f1":  round(best_f1, 4),
-        "best_val_acc": round(float(accuracy_score(last_vy, last_vp)), 4),
-        "latency_ms":   round(lat_ms, 2),
-        "tr_losses":    tr_losses,
-        "va_losses":    va_losses,
-        "tr_accs":      tr_accs,
-        "va_accs":      va_accs,
+        "name":                name,
+        "description":         MODEL_CONFIGS[name]["description"],
+        "paper":               MODEL_CONFIGS[name]["paper"],
+        "n_params":            n_params,
+        "best_val_f1":         round(best_f1, 4),
+        "best_val_acc":        round(float(accuracy_score(last_vy, last_vp)), 4),
+        "latency_ms":          round(lat_ms, 2),
+        "per_class_f1":        per_f1,
+        "per_class_precision": per_prec,
+        "per_class_recall":    per_rec,
+        "tr_losses":           tr_losses,
+        "va_losses":           va_losses,
+        "tr_accs":             tr_accs,
+        "va_accs":             va_accs,
     }
 
 
@@ -217,9 +233,16 @@ def train_zone_classifier(device):
             print(f"  Ep {ep:>2} | Zone val acc: {acc*100:.1f}%")
 
     print(f"  Best zone acc: {best_acc*100:.1f}%  >>  checkpoints/zone_classifier.pth")
+    zone_report = classification_report(all_y, all_p, target_names=ZONE_NAMES,
+                                        output_dict=True, zero_division=0)
     print(classification_report(all_y, all_p, target_names=ZONE_NAMES,
                                  digits=3, zero_division=0))
-    return {"best_acc": round(best_acc, 4)}
+    return {
+        "best_acc":            round(best_acc, 4),
+        "per_class_f1":        [round(zone_report[z]["f1-score"],  4) for z in ZONE_NAMES],
+        "per_class_precision": [round(zone_report[z]["precision"], 4) for z in ZONE_NAMES],
+        "per_class_recall":    [round(zone_report[z]["recall"],    4) for z in ZONE_NAMES],
+    }
 
 
 # ── Combined training curve plot ───────────────────────────────────────────────
