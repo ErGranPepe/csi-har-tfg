@@ -2,6 +2,7 @@
 
 **TFG — Trabajo de Fin de Grado**
 **Autor:** Mario Díaz Gómez | **Curso:** 2025-2026
+**Repositorio:** https://github.com/ErGranPepe/csi-har-tfg
 
 ---
 
